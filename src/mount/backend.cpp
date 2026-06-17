@@ -4,6 +4,7 @@
 #include "kagami/kasumi_client.hpp"
 #include "mount/magic_mount.hpp"
 #include "mount/mount_fs.hpp"
+#include "mount/overlayfs.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -160,14 +161,19 @@ std::vector<ModuleEntry> enumerate_mountable_modules(const Config& config) {
 
 MountReport mount_all_enabled(const Config& config) {
     MountReport report;
-    report.backend = "magic_mount";
 
     const auto modules = enumerate_mountable_modules(config);
     report.modules = static_cast<int>(modules.size());
 
-    if (!config.magic_mount_enabled) {
+    // Backend selection: magic mount is the default; opt into overlayfs by
+    // disabling magic mount (overlayfs_enabled && !magic_mount_enabled). A proper
+    // control-plane selector is a follow-up.
+    const bool use_overlay = config.overlayfs_enabled && !config.magic_mount_enabled;
+    report.backend = use_overlay ? "overlayfs" : "magic_mount";
+
+    if (!config.magic_mount_enabled && !config.overlayfs_enabled) {
         report.ok = false;
-        report.detail = "magic_mount disabled in config";
+        report.detail = "no mount backend enabled in config";
         return report;
     }
 
@@ -191,14 +197,14 @@ MountReport mount_all_enabled(const Config& config) {
     }
     write_boot_attempts(attempts + 1);
 
-    // v1: magic mount handles all enabled modules. (Kasumi-redirect / OverlayFS
-    // routing land in a follow-up; the interface is already in place.)
-    const bool ok = fsutil::run_in_init_mount_ns(
-        [&]() { return magic::mount_modules(modules, config); });
+    const bool ok = fsutil::run_in_init_mount_ns([&]() {
+        return use_overlay ? overlay::mount_modules(modules, config)
+                           : magic::mount_modules(modules, config);
+    });
 
     report.ok = ok;
-    report.mounts = count_committed_mounts();
-    report.detail = ok ? "ok" : "magic mount reported errors (see daemon.log)";
+    report.mounts = use_overlay ? 0 : count_committed_mounts();
+    report.detail = ok ? "ok" : (report.backend + " reported errors (see daemon.log)");
     if (ok) {
         spawn_boot_completed_watcher(); // clears the bootloop counter once boot completes
     }
@@ -206,7 +212,10 @@ MountReport mount_all_enabled(const Config& config) {
 }
 
 bool unmount_all(const Config& config) {
-    return fsutil::run_in_init_mount_ns([&]() { return magic::unmount_all(config); });
+    const bool use_overlay = config.overlayfs_enabled && !config.magic_mount_enabled;
+    return fsutil::run_in_init_mount_ns([&]() {
+        return use_overlay ? overlay::unmount_all(config) : magic::unmount_all(config);
+    });
 }
 
 void recovery_boot_completed() {

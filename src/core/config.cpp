@@ -44,6 +44,10 @@ std::string default_config_json() {
   "tempdir": "",
   "mountsource": "KSU",
   "work_dir": "/dev/kagami",
+  "overlay_dir": "/dev/kagami_overlay",
+  "overlay_img": "/data/adb/kagami/modules.img",
+  "overlay_img_size_mb": 2048,
+  "overlay_writable": false,
   "logfile": "/data/adb/kagami/daemon.log",
   "debug": false,
   "verbose": false,
@@ -123,6 +127,11 @@ static std::string json_string_or(const JsonValue* root, const char* key, const 
     return value ? value->string_or(fallback) : fallback;
 }
 
+static int json_int_or(const JsonValue* root, const char* key, int fallback) {
+    const auto* value = root ? root->find(key) : nullptr;
+    return value ? static_cast<int>(value->u32_or(static_cast<std::uint32_t>(fallback))) : fallback;
+}
+
 bool parse_config_json(const std::string& json, Config& config, std::string& error) {
     JsonValue root;
     if (!parse_json(json, root, error)) {
@@ -138,6 +147,10 @@ bool parse_config_json(const std::string& json, Config& config, std::string& err
     config.log_file = json_string_or(&root, "logfile", config.log_file);
     config.mount_source = json_string_or(&root, "mountsource", config.mount_source);
     config.work_dir = json_string_or(&root, "work_dir", config.work_dir);
+    config.overlay_dir = json_string_or(&root, "overlay_dir", config.overlay_dir);
+    config.overlay_img = json_string_or(&root, "overlay_img", config.overlay_img);
+    config.overlay_img_size_mb = json_int_or(&root, "overlay_img_size_mb", config.overlay_img_size_mb);
+    config.overlay_writable = json_bool_or(&root, "overlay_writable", config.overlay_writable);
     config.fs_type = json_string_or(&root, "fs_type", config.fs_type);
     config.debug = json_bool_or(&root, "debug", config.debug);
     config.verbose = json_bool_or(&root, "verbose", config.verbose);

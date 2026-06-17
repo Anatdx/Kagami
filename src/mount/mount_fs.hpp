@@ -24,6 +24,11 @@ bool bind_mount(const std::string& src, const std::string& dst);
 // (.replace) module subtrees that must be fully reproduced.
 bool mirror_entry(const std::string& src, const std::string& dst);
 
+// Recursively copy the src tree into dst as real files (bytes copied, not
+// bound), recreating dirs/symlinks and preserving mode/owner/SELinux context per
+// entry. Used to populate the OverlayFS content base. Returns false on any error.
+bool copy_tree(const std::string& src, const std::string& dst);
+
 void rm_rf(const std::string& path);
 
 // True if a freshly mounted tmpfs preserves security.selinux xattrs on this

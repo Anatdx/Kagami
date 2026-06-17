@@ -33,6 +33,7 @@ set(KAGAMI_SOURCES
     src/mount/kasumi_client.cpp
     src/mount/magic_mount.cpp
     src/mount/overlayfs.cpp
+    src/mount/storage.cpp
 )
 
 add_executable(kagamid ${KAGAMI_SOURCES})
