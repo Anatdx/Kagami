@@ -36,9 +36,15 @@
 #ifndef __NR_move_mount
 #define __NR_move_mount 429
 #endif
+#ifndef __NR_open_tree
+#define __NR_open_tree 428
+#endif
 
 #ifndef MNT_DETACH
 #define MNT_DETACH 2
+#endif
+#ifndef AT_RECURSIVE
+#define AT_RECURSIVE 0x8000
 #endif
 
 namespace kagami::mount::overlay {
@@ -51,9 +57,14 @@ static constexpr unsigned kFsconfigSetString = 1u;
 static constexpr unsigned kFsconfigCmdCreate = 6u;
 static constexpr unsigned kFsmountCloexec = 0x00000001u;
 static constexpr unsigned kMoveMountEmptyPath = 0x00000004u;
+static constexpr unsigned kOpenTreeClone = 0x00000001u;     // OPEN_TREE_CLONE
+static constexpr unsigned kOpenTreeCloexec = 0x00080000u;   // OPEN_TREE_CLOEXEC (== O_CLOEXEC)
 
 static int sys_fsopen(const char* fsname, unsigned flags) {
     return static_cast<int>(syscall(__NR_fsopen, fsname, flags));
+}
+static int sys_open_tree(int dfd, const char* path, unsigned flags) {
+    return static_cast<int>(syscall(__NR_open_tree, dfd, path, flags));
 }
 static int sys_fsconfig(int fd, unsigned cmd, const char* key, const char* value, int aux) {
     return static_cast<int>(syscall(__NR_fsconfig, fd, cmd, key, value, aux));
@@ -123,7 +134,20 @@ static bool mount_overlayfs(const std::vector<std::string>& lower_dirs, const st
     return false;
 }
 
+// Re-establish a (possibly overlay-shadowed) sub-mount onto dst. open_tree clones
+// the source mount tree recursively and move_mount attaches it, faithfully
+// reproducing sub-mounts even when the source path is shadowed by an overlay;
+// fall back to a classic recursive bind if the new mount API is unavailable.
 static bool rbind_mount(const std::string& src, const std::string& dst) {
+    const int tree =
+        sys_open_tree(AT_FDCWD, src.c_str(), kOpenTreeClone | kOpenTreeCloexec | AT_RECURSIVE);
+    if (tree >= 0) {
+        const bool ok = sys_move_mount(tree, "", AT_FDCWD, dst.c_str(), kMoveMountEmptyPath) == 0;
+        close(tree);
+        if (ok) {
+            return true;
+        }
+    }
     return ::mount(src.c_str(), dst.c_str(), nullptr, MS_BIND | MS_REC, nullptr) == 0;
 }
 
