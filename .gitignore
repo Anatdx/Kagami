@@ -43,6 +43,9 @@
 build/
 Build/
 build-*/
+out/
+cmake-build-*/
+.gradle/
 
 # CMake generated files
 CMakeFiles/
@@ -57,6 +60,7 @@ compile_commands.json
 *.log
 *.bak
 *.swp
+.DS_Store
 
 # vcpkg
 vcpkg_installed/
@@ -67,3 +71,30 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# WebUI and package outputs
+webui/node_modules/
+webui/dist/
+module/webroot/
+
+# Zygisk template outputs
+zygisk/.gradle/
+zygisk/.idea/
+zygisk/.cxx/
+zygisk/my_build/
+zygisk/output/
+zygisk/release/
+zygisk/symbols/
+
+# Android / Gradle (manager app)
+.cxx/
+.kotlin/
+.idea/
+*.iml
+local.properties
+captures/
+.externalNativeBuild/
+*.apk
+*.aab
+*.keystore
+*.jks
