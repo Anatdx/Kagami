@@ -61,7 +61,7 @@ std::string default_config_json() {
   "kasumi_enabled": true,
   "overlayfs_enabled": true,
   "magic_mount_enabled": true,
-  "mount_backend": "magic",
+  "mount_backend": "auto",
   "policy": {
     "owner": "auto",
     "use_allow_uids": false,

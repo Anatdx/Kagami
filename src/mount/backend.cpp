@@ -1,5 +1,6 @@
 #include "mount/backend.hpp"
 
+#include "core/json_value.hpp"
 #include "core/runtime.hpp"
 #include "kagami/kasumi_client.hpp"
 #include "mount/magic_mount.hpp"
@@ -10,6 +11,7 @@
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 
@@ -159,21 +161,76 @@ std::vector<ModuleEntry> enumerate_mountable_modules(const Config& config) {
     return out;
 }
 
+// Read per-module mount modes from module_mode.json:
+// {"<id>": "auto|overlay|magic|kasumi|none"}.
+static std::map<std::string, std::string> read_module_modes() {
+    std::map<std::string, std::string> out;
+    std::ifstream in((runtime_data_dir() / "module_mode.json").string());
+    if (!in) {
+        return out;
+    }
+    std::stringstream buf;
+    buf << in.rdbuf();
+    JsonValue root;
+    std::string error;
+    if (parse_json(buf.str(), root, error) && root.is_object()) {
+        for (const auto& [id, value] : root.object_value) {
+            if (value.is_string()) {
+                out[id] = value.string_value;
+            }
+        }
+    }
+    return out;
+}
+
+static bool dir_has_direct_files(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) {
+        return false;
+    }
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_directory(ec)) {
+            return true; // a non-dir entry sits directly at this level
+        }
+    }
+    return false;
+}
+
+// A module needs magic mount when it places files directly at a partition root
+// (e.g. system/build.prop): overlay only stacks on leaf subdirs, never on a
+// partition root. Everything else can be overlaid.
+static bool module_needs_magic(const ModuleEntry& m) {
+    if (dir_has_direct_files(m.path / "system")) {
+        return true;
+    }
+    for (const auto& part : fsutil::kManagedPartitions) {
+        if (part == "system") {
+            continue;
+        }
+        if (dir_has_direct_files(m.path / part) ||
+            dir_has_direct_files(m.path / "system" / part)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True if the module has any managed-partition tree (i.e. contributes mounts).
+static bool module_has_content(const ModuleEntry& m) {
+    for (const auto& part : fsutil::kManagedPartitions) {
+        std::error_code ec;
+        if (fs::is_directory(m.path / part, ec)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 MountReport mount_all_enabled(const Config& config) {
     MountReport report;
 
     const auto modules = enumerate_mountable_modules(config);
     report.modules = static_cast<int>(modules.size());
-
-    // Backend selection: config.mount_backend ("magic" | "overlay" | "none").
-    const bool use_overlay = config.mount_backend == "overlay";
-    report.backend = use_overlay ? "overlayfs" : "magic_mount";
-
-    if (config.mount_backend == "none") {
-        report.ok = false;
-        report.detail = "no mount backend selected (config.mount_backend=none)";
-        return report;
-    }
 
     // Bootloop protection: refuse to mount if previous boots never confirmed
     // completion, so a bad mount cannot brick boot. The counter is bumped here
@@ -195,14 +252,75 @@ MountReport mount_all_enabled(const Config& config) {
     }
     write_boot_attempts(attempts + 1);
 
-    const bool ok = fsutil::run_in_init_mount_ns([&]() {
-        return use_overlay ? overlay::mount_modules(modules, config)
-                           : magic::mount_modules(modules, config);
-    });
+    // Orchestrate per module: a global override (config.mount_backend != "auto")
+    // forces every module; otherwise each module's mode (module_mode.json, default
+    // "auto") decides, with auto falling back overlay -> magic -> none.
+    const auto modes = read_module_modes();
+    const bool can_overlay = proc_filesystems_has("overlay");
+    const std::string& global = config.mount_backend;
+    const bool force = !global.empty() && global != "auto";
 
+    std::vector<ModuleEntry> overlay_set;
+    std::vector<ModuleEntry> magic_set;
+    std::vector<ModuleEntry> kasumi_set;
+    for (const auto& m : modules) {
+        if (!module_has_content(m)) {
+            continue; // no managed-partition tree → contributes no mounts
+        }
+        std::string mode = "auto";
+        if (force) {
+            mode = global;
+        } else {
+            const auto it = modes.find(m.id);
+            if (it != modes.end() && !it->second.empty()) {
+                mode = it->second;
+            }
+        }
+        if (mode == "auto") {
+            mode = (can_overlay && !module_needs_magic(m)) ? "overlay" : "magic";
+        }
+        if (mode == "overlay") {
+            overlay_set.push_back(m);
+        } else if (mode == "magic") {
+            magic_set.push_back(m);
+        } else if (mode == "kasumi") {
+            kasumi_set.push_back(m);
+        }
+        // "none" (or unknown) → skip
+    }
+
+    fsutil::mlog("orchestrator: overlay=" + std::to_string(overlay_set.size()) +
+                 " magic=" + std::to_string(magic_set.size()) +
+                 " kasumi=" + std::to_string(kasumi_set.size()));
+
+    bool ok = true;
+    if (!overlay_set.empty() || !magic_set.empty()) {
+        ok = fsutil::run_in_init_mount_ns([&]() {
+            bool r = true;
+            // Magic first: magic::mount_modules clears stale KSU mounts at start,
+            // which would otherwise tear down overlay's freshly-mounted KSU leaves
+            // (both backends use the same mount source).
+            if (!magic_set.empty()) {
+                r = magic::mount_modules(magic_set, config) && r;
+            }
+            if (!overlay_set.empty()) {
+                r = overlay::mount_modules(overlay_set, config) && r;
+            }
+            return r;
+        });
+    }
+    if (!kasumi_set.empty()) {
+        // Per-module kasumi (LKM) dispatch is a follow-up; flag it for now.
+        fsutil::mlog("orchestrator: " + std::to_string(kasumi_set.size()) +
+                     " module(s) set to kasumi; LKM per-module wiring pending");
+    }
+
+    report.backend = "hybrid(overlay=" + std::to_string(overlay_set.size()) +
+                     ",magic=" + std::to_string(magic_set.size()) +
+                     ",kasumi=" + std::to_string(kasumi_set.size()) + ")";
     report.ok = ok;
-    report.mounts = use_overlay ? 0 : count_committed_mounts();
-    report.detail = ok ? "ok" : (report.backend + " reported errors (see daemon.log)");
+    report.mounts = count_committed_mounts();
+    report.detail = ok ? "ok" : "some backends reported errors (see daemon.log)";
     if (ok) {
         spawn_boot_completed_watcher(); // clears the bootloop counter once boot completes
     }
@@ -210,9 +328,13 @@ MountReport mount_all_enabled(const Config& config) {
 }
 
 bool unmount_all(const Config& config) {
-    const bool use_overlay = config.mount_backend == "overlay";
+    // Hybrid: both backends may have live mounts; tear down both (each is a
+    // source-gated no-op when it owns nothing).
     return fsutil::run_in_init_mount_ns([&]() {
-        return use_overlay ? overlay::unmount_all(config) : magic::unmount_all(config);
+        bool r = true;
+        r = overlay::unmount_all(config) && r;
+        r = magic::unmount_all(config) && r;
+        return r;
     });
 }
 
