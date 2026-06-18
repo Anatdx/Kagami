@@ -248,6 +248,38 @@ std::string resolve_module_backend(const ModuleEntry& m, const Config& config,
     return mode;
 }
 
+// Rewrite Kagami's own module.prop description so the manager's module list shows
+// the live mount status (like hymo). Keeps the file's inode/context (truncate).
+static void update_self_status(bool ok, std::size_t overlay, std::size_t magic,
+                              std::size_t kasumi) {
+    const fs::path prop = runtime_modules_dir() / "kagami" / "module.prop";
+    std::ifstream in(prop);
+    if (!in) {
+        return;
+    }
+    std::ostringstream desc;
+    desc << (ok ? "😋" : "😭") << " Kagami · Overlay " << overlay << " / Magic " << magic
+         << " / Kasumi " << kasumi;
+
+    std::string content;
+    std::string line;
+    bool desc_done = false;
+    while (std::getline(in, line)) {
+        if (line.rfind("description=", 0) == 0) {
+            content += "description=" + desc.str() + "\n";
+            desc_done = true;
+        } else {
+            content += line + "\n";
+        }
+    }
+    in.close();
+    if (!desc_done) {
+        content += "description=" + desc.str() + "\n";
+    }
+    std::ofstream out(prop, std::ios::trunc);
+    out << content;
+}
+
 MountReport mount_all_enabled(const Config& config) {
     MountReport report;
 
@@ -325,6 +357,7 @@ MountReport mount_all_enabled(const Config& config) {
     report.ok = ok;
     report.mounts = count_committed_mounts();
     report.detail = ok ? "ok" : "some backends reported errors (see daemon.log)";
+    update_self_status(ok, overlay_set.size(), magic_set.size(), kasumi_set.size());
     if (ok) {
         spawn_boot_completed_watcher(); // clears the bootloop counter once boot completes
     }
