@@ -800,12 +800,6 @@ function renderModuleCard(module) {
       </div>
 
       <div class="module-card-body" ${expanded ? "" : "hidden"}>
-        <div class="module-runtime-actions">
-          <button class="button" data-variant="ghost" data-action="${active ? "hot-unmount" : "hot-mount"}" data-module-id="${escapeHtml(module.id)}">${escapeHtml(
-            active ? tr("modules.hotUnmount", "Hot Unmount") : tr("modules.hotMount", "Hot Mount")
-          )}</button>
-        </div>
-
         <div class="rule-editor">
           <div class="section-head" style="margin-bottom:4px;">
             <div>
