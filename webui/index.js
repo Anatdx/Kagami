@@ -251,6 +251,8 @@ function getModeLabel(mode) {
       return tr("modules.modeOverlay", "OverlayFS");
     case "magic":
       return tr("modules.modeMagic", "Magic Mount");
+    case "none":
+      return tr("modules.modeNone", "None");
     default:
       return mode || tr("staticUi.common.unknown", "Unknown");
   }
@@ -378,7 +380,9 @@ function renderBadges(items, tone = "primary") {
 }
 
 function renderModeOptions(selected, { includeAuto = true } = {}) {
-  const values = includeAuto ? ["auto", "kasumi", "overlay", "magic"] : ["kasumi", "overlay", "magic"];
+  const values = includeAuto
+    ? ["auto", "overlay", "magic", "kasumi", "none"]
+    : ["overlay", "magic", "kasumi", "none"];
   return values
     .map((value) => `<option value="${value}" ${selected === value ? "selected" : ""}>${escapeHtml(getModeLabel(value))}</option>`)
     .join("");
