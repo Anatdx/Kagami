@@ -37,7 +37,7 @@ if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM="$PLATFORM" \
-    -DKAGAMI_BUILD_WEBUI=OFF
+
 fi
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 cmake --build "$BUILD_DIR" --target kagamid -j"$JOBS"
@@ -49,6 +49,9 @@ BIN="$BUILD_DIR/kagamid-${ABI}"
 ID="$(sed -n 's/^id=//p' module/module.prop | head -1)"
 VER="$(sed -n 's/^version=//p' module/module.prop | head -1)"
 : "${ID:?missing id in module.prop}"
+
+# --- stage the static WebUI (webui/ source -> module/webroot artifact) -------
+rm -rf module/webroot && cp -r webui module/webroot
 
 # --- stage the module tree (module/ + ABI binary) ----------------------------
 PKG="$BUILD_DIR/package"

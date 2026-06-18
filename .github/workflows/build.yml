@@ -27,13 +27,6 @@ jobs:
         with:
           ndk-version: r27c
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: webui/package-lock.json
-
       - name: Setup CMake / Ninja / zip
         run: |
           sudo apt-get update

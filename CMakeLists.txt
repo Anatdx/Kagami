@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.22)
 
 project(Kagami VERSION 0.1.0 LANGUAGES CXX)
 
-option(KAGAMI_BUILD_WEBUI "Build the React WebUI into module/webroot" ON)
 option(KAGAMI_STRIP_ANDROID_BINARY "Strip Android binaries during release builds" ON)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -69,23 +68,8 @@ if(ANDROID)
     endif()
 endif()
 
-find_program(NPM_EXECUTABLE npm)
-
-if(KAGAMI_BUILD_WEBUI)
-    if(NOT NPM_EXECUTABLE)
-        message(FATAL_ERROR "npm is required when KAGAMI_BUILD_WEBUI=ON")
-    endif()
-
-    add_custom_target(webui
-        COMMAND ${NPM_EXECUTABLE} ci
-        COMMAND ${NPM_EXECUTABLE} run build
-        COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_SOURCE_DIR}/module/webroot
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/webui/dist ${CMAKE_SOURCE_DIR}/module/webroot
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/webui
-        COMMENT "Building Kagami WebUI"
-        VERBATIM
-    )
-endif()
+# The WebUI is the static frontend committed in module/webroot (served by
+# KernelSU WebUI X); there is no build step.
 
 set(KAGAMI_OUT_DIR "${CMAKE_BINARY_DIR}/out")
 set(KAGAMI_PACKAGE_DIR "${CMAKE_BINARY_DIR}/package")
@@ -102,7 +86,3 @@ add_custom_target(package
     COMMENT "Creating ${KAGAMI_PACKAGE_ZIP}"
     VERBATIM
 )
-
-if(TARGET webui)
-    add_dependencies(package webui)
-endif()
