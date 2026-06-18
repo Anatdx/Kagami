@@ -752,7 +752,8 @@ function renderModulesPage() {
 }
 
 function renderModuleCard(module) {
-  const active = (state.systemInfo.kasumiModules || []).includes(module.id);
+  // The actual mount method this module resolved to (overlay/magic/kasumi/none).
+  const effective = module.strategy || "none";
   const rules = Array.isArray(module.rules) ? module.rules : [];
   const expanded = isModuleExpanded(module);
   const toggleLabel = expanded ? tr("staticUi.modules.collapse", "Collapse") : tr("staticUi.modules.expand", "Expand");
@@ -766,7 +767,7 @@ function renderModuleCard(module) {
           <div class="module-meta">
             <span class="badge">${escapeHtml(module.version || tr("staticUi.modules.unknownVersion", "unknown version"))}</span>
             <span class="badge">${escapeHtml(module.author || tr("staticUi.modules.unknownAuthor", "unknown author"))}</span>
-            <span class="badge" data-tone="${active ? "success" : "primary"}">${escapeHtml(active ? tr("modules.mountSuccess", "Mounted") : tr("staticUi.modules.idle", "Idle"))}</span>
+            <span class="badge" data-tone="${effective === "none" ? "primary" : "success"}">${escapeHtml(getModeLabel(effective))}</span>
             ${rules.length > 0 ? `<span class="badge">${escapeHtml(tr("staticUi.modules.rulesCount", "{count} rules", { count: rules.length }))}</span>` : ""}
           </div>
           <div class="muted mono" style="margin-top:8px;">${escapeHtml(module.id)}</div>

@@ -226,6 +226,28 @@ static bool module_has_content(const ModuleEntry& m) {
     return false;
 }
 
+std::string resolve_module_backend(const ModuleEntry& m, const Config& config,
+                                   const std::map<std::string, std::string>& modes) {
+    if (!module_has_content(m)) {
+        return "none"; // no managed-partition tree → contributes no mounts
+    }
+    std::string mode = "auto";
+    const std::string& global = config.mount_backend;
+    if (!global.empty() && global != "auto") {
+        mode = global; // global override forces every module
+    } else {
+        const auto it = modes.find(m.id);
+        if (it != modes.end() && !it->second.empty()) {
+            mode = it->second;
+        }
+    }
+    if (mode == "auto") {
+        const bool can_overlay = proc_filesystems_has("overlay");
+        mode = (can_overlay && !module_needs_magic(m)) ? "overlay" : "magic";
+    }
+    return mode;
+}
+
 MountReport mount_all_enabled(const Config& config) {
     MountReport report;
 
@@ -256,29 +278,11 @@ MountReport mount_all_enabled(const Config& config) {
     // forces every module; otherwise each module's mode (module_mode.json, default
     // "auto") decides, with auto falling back overlay -> magic -> none.
     const auto modes = read_module_modes();
-    const bool can_overlay = proc_filesystems_has("overlay");
-    const std::string& global = config.mount_backend;
-    const bool force = !global.empty() && global != "auto";
-
     std::vector<ModuleEntry> overlay_set;
     std::vector<ModuleEntry> magic_set;
     std::vector<ModuleEntry> kasumi_set;
     for (const auto& m : modules) {
-        if (!module_has_content(m)) {
-            continue; // no managed-partition tree → contributes no mounts
-        }
-        std::string mode = "auto";
-        if (force) {
-            mode = global;
-        } else {
-            const auto it = modes.find(m.id);
-            if (it != modes.end() && !it->second.empty()) {
-                mode = it->second;
-            }
-        }
-        if (mode == "auto") {
-            mode = (can_overlay && !module_needs_magic(m)) ? "overlay" : "magic";
-        }
+        const std::string mode = resolve_module_backend(m, config, modes);
         if (mode == "overlay") {
             overlay_set.push_back(m);
         } else if (mode == "magic") {
@@ -286,7 +290,7 @@ MountReport mount_all_enabled(const Config& config) {
         } else if (mode == "kasumi") {
             kasumi_set.push_back(m);
         }
-        // "none" (or unknown) → skip
+        // "none" → skip
     }
 
     fsutil::mlog("orchestrator: overlay=" + std::to_string(overlay_set.size()) +

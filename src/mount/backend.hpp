@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,13 @@ struct MountReport {
 // Enabled, mountable modules under runtime_modules_dir(): skips entries with
 // no module.prop or with a disable/remove/skip_mount marker.
 std::vector<ModuleEntry> enumerate_mountable_modules(const Config& config);
+
+// Resolve a module's effective backend ("overlay"|"magic"|"kasumi"|"none") from
+// its configured mode (modes[id], the global override config.mount_backend, or
+// the auto fallback). Used by the orchestrator and to report a module's actual
+// mount method. `modes` is the parsed module_mode.json (id -> mode).
+std::string resolve_module_backend(const ModuleEntry& module, const Config& config,
+                                   const std::map<std::string, std::string>& modes);
 
 // Pick a backend (magic mount), enter the init mount ns, mount every enabled
 // module. Safe to call from the daemon or a one-shot CLI.

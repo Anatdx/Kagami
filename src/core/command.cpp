@@ -890,8 +890,8 @@ static int handle_api(const std::vector<std::string>& args) {
 static int handle_module(const std::vector<std::string>& args) {
     const auto sub = arg_or_default(args, 1, "");
     if (sub == "list") {
-        const auto active_modules = kasumi::active_modules_from_rules(kasumi::active_rules());
         const auto modes = parse_json_string_map(read_file(data_dir() / "module_mode.json"));
+        const Config cfg = current_config();
         std::cout << "{\"modules\":[";
         bool first = true;
         const fs::path module_root = modules_dir();
@@ -926,13 +926,11 @@ static int handle_module(const std::vector<std::string>& args) {
                     std::cout << ",";
                 }
                 first = false;
-                const bool active = std::find(active_modules.begin(), active_modules.end(), id) != active_modules.end();
                 const auto mode_it = modes.find(id);
                 const std::string mode = mode_it == modes.end() ? "auto" : mode_it->second;
-                std::string strategy = mode;
-                if (strategy == "auto") {
-                    strategy = active ? "kasumi" : "auto";
-                }
+                // strategy = the actual resolved backend (overlay/magic/kasumi/none)
+                const std::string strategy =
+                    mount::resolve_module_backend(mount::ModuleEntry{id, entry.path()}, cfg, modes);
                 std::cout << "{"
                           << "\"id\":" << json_quote(id) << ","
                           << "\"name\":" << json_quote(props.count("name") ? props.at("name") : id) << ","
