@@ -61,6 +61,7 @@ std::string default_config_json() {
   "kasumi_enabled": true,
   "overlayfs_enabled": true,
   "magic_mount_enabled": true,
+  "mount_backend": "magic",
   "policy": {
     "owner": "auto",
     "use_allow_uids": false,
@@ -157,6 +158,7 @@ bool parse_config_json(const std::string& json, Config& config, std::string& err
     config.kasumi_enabled = json_bool_or(&root, "kasumi_enabled", config.kasumi_enabled);
     config.overlayfs_enabled = json_bool_or(&root, "overlayfs_enabled", config.overlayfs_enabled);
     config.magic_mount_enabled = json_bool_or(&root, "magic_mount_enabled", config.magic_mount_enabled);
+    config.mount_backend = json_string_or(&root, "mount_backend", config.mount_backend);
     config.partitions = json_string_array_or_empty(root.find("partitions"));
 
     const JsonValue* policy = root.find("policy");

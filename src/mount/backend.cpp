@@ -165,15 +165,13 @@ MountReport mount_all_enabled(const Config& config) {
     const auto modules = enumerate_mountable_modules(config);
     report.modules = static_cast<int>(modules.size());
 
-    // Backend selection: magic mount is the default; opt into overlayfs by
-    // disabling magic mount (overlayfs_enabled && !magic_mount_enabled). A proper
-    // control-plane selector is a follow-up.
-    const bool use_overlay = config.overlayfs_enabled && !config.magic_mount_enabled;
+    // Backend selection: config.mount_backend ("magic" | "overlay" | "none").
+    const bool use_overlay = config.mount_backend == "overlay";
     report.backend = use_overlay ? "overlayfs" : "magic_mount";
 
-    if (!config.magic_mount_enabled && !config.overlayfs_enabled) {
+    if (config.mount_backend == "none") {
         report.ok = false;
-        report.detail = "no mount backend enabled in config";
+        report.detail = "no mount backend selected (config.mount_backend=none)";
         return report;
     }
 
@@ -212,7 +210,7 @@ MountReport mount_all_enabled(const Config& config) {
 }
 
 bool unmount_all(const Config& config) {
-    const bool use_overlay = config.overlayfs_enabled && !config.magic_mount_enabled;
+    const bool use_overlay = config.mount_backend == "overlay";
     return fsutil::run_in_init_mount_ns([&]() {
         return use_overlay ? overlay::unmount_all(config) : magic::unmount_all(config);
     });

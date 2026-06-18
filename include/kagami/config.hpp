@@ -45,6 +45,9 @@ struct Config {
     bool kasumi_enabled = true;
     bool overlayfs_enabled = true;
     bool magic_mount_enabled = true;
+    // Active mount backend: "magic" | "overlay" | "none". Selected by the WebUI;
+    // supersedes the overlayfs_enabled/magic_mount_enabled pair for selection.
+    std::string mount_backend = "magic";
     PolicyConfig policy;
 };
 
