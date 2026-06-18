@@ -8,6 +8,7 @@
 #include "kagami/kasumi_uapi_compat.hpp"
 #include "mount/backend.hpp"
 #include "mount/magic_mount.hpp"
+#include "mount/mount_fs.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -303,11 +304,67 @@ static bool path_is_read_only_mount(const std::string& mount_point) {
     return false;
 }
 
+struct MountEntry {
+    std::string mount_point;
+    std::string fstype;
+    std::string source;
+};
+
+// Parse /proc/self/mountinfo into (mount_point, fstype, source) tuples.
+static std::vector<MountEntry> read_mountinfo() {
+    std::vector<MountEntry> out;
+    std::ifstream in("/proc/self/mountinfo");
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto sep = line.find(" - ");
+        if (sep == std::string::npos) {
+            continue;
+        }
+        std::istringstream pre(line.substr(0, sep));
+        std::vector<std::string> f;
+        std::string tok;
+        while (pre >> tok) {
+            f.push_back(tok);
+        }
+        if (f.size() < 5) {
+            continue;
+        }
+        std::istringstream post(line.substr(sep + 3));
+        MountEntry e;
+        e.mount_point = f[4];
+        post >> e.fstype >> e.source;
+        out.push_back(e);
+    }
+    return out;
+}
+
+static Config current_config() {
+    Config config;
+    std::string error;
+    read_config_file(config_file().string(), config, error); // struct defaults on miss
+    return config;
+}
+
 static int print_storage_json() {
-    const fs::path base = data_dir();
+    const Config config = current_config();
+    const std::string overlay_base = config.overlay_dir + "/mnt";
+
+    // Report the active backend's storage base (our mount source, fs tmpfs/ext4/
+    // erofs): the overlay base if mounted, else the magic-mount work tmpfs, else
+    // fall back to the host /data filesystem.
+    std::string mode = "host";
+    fs::path target = data_dir();
+    for (const auto& m : read_mountinfo()) {
+        if (m.source == config.mount_source &&
+            (m.mount_point == overlay_base || m.mount_point == config.work_dir)) {
+            mode = m.fstype;
+            target = m.mount_point;
+            break;
+        }
+    }
 
     struct statvfs st = {};
-    if (statvfs(base.c_str(), &st) != 0) {
+    if (statvfs(target.c_str(), &st) != 0) {
         std::cout << "{\"error\":\"not mounted\"}\n";
         return 0;
     }
@@ -323,7 +380,7 @@ static int print_storage_json() {
         << "\"used\":" << json_quote(format_bytes(used)) << ","
         << "\"avail\":" << json_quote(format_bytes(avail)) << ","
         << "\"percent\":" << percent << ","
-        << "\"mode\":\"host\""
+        << "\"mode\":" << json_quote(mode)
         << "}\n";
     return 0;
 }
@@ -593,6 +650,20 @@ static int print_system_json() {
     const int bitmask = version.status == kasumi::Status::Available ? kasumi::features() : 0;
     const std::string hook_text = version.status == kasumi::Status::Available ? kasumi::hooks() : "";
 
+    // Count our live mounts (our mount source) for the stats panel.
+    const Config config = current_config();
+    int total_mounts = 0;
+    int overlay_mounts = 0;
+    for (const auto& m : read_mountinfo()) {
+        if (m.source != config.mount_source) {
+            continue;
+        }
+        ++total_mounts;
+        if (m.fstype == "overlay") {
+            ++overlay_mounts;
+        }
+    }
+
     std::cout
         << "{"
         << "\"kernel\":" << json_quote(kernel_release()) << ","
@@ -604,9 +675,11 @@ static int print_system_json() {
         << "\"features\":";
     print_features_json(bitmask);
     std::cout
-        << ",\"mountStats\":{\"total_mounts\":0,\"successful_mounts\":0,\"failed_mounts\":0,"
-        << "\"tmpfs_created\":0,\"files_mounted\":0,\"dirs_mounted\":0,\"symlinks_created\":0,"
-        << "\"overlayfs_mounts\":0,\"success_rate\":0},"
+        << ",\"mountStats\":{\"total_mounts\":" << total_mounts
+        << ",\"successful_mounts\":" << total_mounts
+        << ",\"failed_mounts\":0,\"tmpfs_created\":0,\"files_mounted\":0,\"dirs_mounted\":0,"
+        << "\"symlinks_created\":0,\"overlayfs_mounts\":" << overlay_mounts
+        << ",\"success_rate\":" << (total_mounts > 0 ? 100 : 0) << "},"
         << "\"detectedPartitions\":";
     print_partitions_json();
     std::cout << ",\"backends\":";
@@ -706,8 +779,20 @@ static int print_kasumi_rules_json() {
 static int handle_config(const std::vector<std::string>& args) {
     const auto sub = arg_or_default(args, 1, "");
     if (sub == "show") {
-        const auto config = read_file(config_file());
-        std::cout << (config.empty() ? default_config_json() : config);
+        std::string config = read_file(config_file());
+        if (config.empty()) {
+            config = default_config_json();
+        }
+        // Inject runtime-probed fields the WebUI reads from the merged config.
+        std::string runtime = ",\"tmpfs_xattr_supported\":";
+        runtime += mount::fsutil::tmpfs_xattr_supported() ? "true" : "false";
+        runtime += ",\"kasumi_available\":";
+        runtime += kasumi::is_available() ? "true" : "false";
+        const auto brace = config.rfind('}');
+        if (brace != std::string::npos) {
+            config.insert(brace, runtime);
+        }
+        std::cout << config;
         return 0;
     }
     if (sub == "gen") {
@@ -813,6 +898,26 @@ static int handle_module(const std::vector<std::string>& args) {
         if (fs::is_directory(module_root)) {
             for (const auto& entry : fs::directory_iterator(module_root)) {
                 if (!entry.is_directory()) {
+                    continue;
+                }
+                // Skip modules that opt out of metamodule mounting.
+                std::error_code mec;
+                if (fs::exists(entry.path() / "disable", mec) ||
+                    fs::exists(entry.path() / "remove", mec) ||
+                    fs::exists(entry.path() / "skip_mount", mec)) {
+                    continue;
+                }
+                // Only list modules that contribute mounts (have a managed
+                // partition tree); skip plain modules (zygisk, etc.).
+                bool has_mount_content = false;
+                for (const auto& part : mount::fsutil::kManagedPartitions) {
+                    std::error_code ec;
+                    if (fs::is_directory(entry.path() / part, ec)) {
+                        has_mount_content = true;
+                        break;
+                    }
+                }
+                if (!has_mount_content) {
                     continue;
                 }
                 const std::string id = entry.path().filename().string();
