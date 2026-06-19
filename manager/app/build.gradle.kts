@@ -4,6 +4,17 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Release signing is pulled from the environment (KAGAMI_* — set in your shell
+// or as CI secrets). When the vars are absent (e.g. a contributor without the
+// key, or a fork PR), the release build stays unsigned instead of failing.
+val kagamiKeystore: String? = System.getenv("KAGAMI_KEYSTORE")
+val kagamiKeystorePassword: String? = System.getenv("KAGAMI_KEYSTORE_PASSWORD")
+val kagamiKeyAlias: String? = System.getenv("KAGAMI_KEY_ALIAS")
+val kagamiKeyPassword: String? = System.getenv("KAGAMI_KEY_PASSWORD")
+val kagamiHasSigning = listOf(
+    kagamiKeystore, kagamiKeystorePassword, kagamiKeyAlias, kagamiKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.anatdx.kagami"
     compileSdk = 36
@@ -23,6 +34,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (kagamiHasSigning) {
+            create("release") {
+                storeFile = file(kagamiKeystore!!)
+                storePassword = kagamiKeystorePassword
+                keyAlias = kagamiKeyAlias
+                keyPassword = kagamiKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -30,6 +52,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (kagamiHasSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
