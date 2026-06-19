@@ -98,6 +98,47 @@ build_webui() {
     print_success "WebUI staged into module/webroot"
 }
 
+# Build the Kagami manager APK (release) and stage it into module/ so the
+# packaging step bundles it into the module zip. Signing comes from KAGAMI_*
+# (shell env or CI secrets); without them the APK is built unsigned. Skipped on
+# --no-manager or when no JDK is present (keeps quick local packaging working).
+MANAGER_APK_STAGED=""
+build_manager() {
+    [[ $NO_MANAGER -eq 1 ]] && { print_info "Skipping manager APK (--no-manager)"; return 0; }
+    if ! command -v java &> /dev/null; then
+        print_warning "java not found; skipping manager APK (zip won't include it)"
+        return 0
+    fi
+
+    # Gradle needs the Android SDK; honour env, else probe the usual locations.
+    if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ] && [ ! -f "${PROJECT_ROOT}/manager/local.properties" ]; then
+        local sdk
+        for sdk in "$HOME/Library/Android/sdk" "$HOME/Android/Sdk" "$HOME/android-sdk" "/usr/local/lib/android/sdk"; do
+            if [ -d "$sdk" ]; then export ANDROID_HOME="$sdk"; print_info "Android SDK: $sdk"; break; fi
+        done
+    fi
+
+    print_info "Building Kagami manager APK (gradle assembleRelease)..."
+    chmod +x "${PROJECT_ROOT}/manager/gradlew" 2>/dev/null || true
+    ( cd "${PROJECT_ROOT}/manager" && ./gradlew --no-daemon ${VERBOSE:+--info} assembleRelease )
+
+    local apk_dir="${PROJECT_ROOT}/manager/app/build/outputs/apk/release"
+    local apk
+    apk="$(find "$apk_dir" -name '*.apk' 2>/dev/null | grep -vi 'unsigned' | head -n1)"
+    [ -z "$apk" ] && apk="$(find "$apk_dir" -name '*.apk' 2>/dev/null | head -n1)"
+    if [ -z "$apk" ] || [ ! -f "$apk" ]; then
+        print_error "Manager APK not found in $apk_dir after build"
+        exit 1
+    fi
+
+    MANAGER_APK_STAGED="${PROJECT_ROOT}/module/KagamiManager.apk"
+    cp "$apk" "$MANAGER_APK_STAGED"
+    case "$apk" in
+        *unsigned*) print_warning "Bundled UNSIGNED manager APK — set KAGAMI_* to sign ($(du -h "$apk" | cut -f1))" ;;
+        *) print_success "Bundled signed manager APK ($(du -h "$apk" | cut -f1))" ;;
+    esac
+}
+
 # Configure and build kagamid for a specific architecture
 build_arch() {
     local ARCH=$1
@@ -146,10 +187,12 @@ stamp_version() {
 COMMAND="${1:-package}"
 shift || true
 NO_WEBUI=0
+NO_MANAGER=0
 VERBOSE=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-webui) NO_WEBUI=1; shift ;;
+        --no-manager) NO_MANAGER=1; shift ;;
         --verbose|-v) VERBOSE="--log-level=VERBOSE"; shift ;;
         *) shift ;;
     esac
@@ -175,18 +218,23 @@ case $COMMAND in
     arm64)
         build_arch "arm64-v8a"
         ;;
+    manager)
+        build_manager
+        ;;
     package)
         build_webui
         build_arch "arm64-v8a"
+        build_manager
         stamp_version
         print_info "Packaging (cmake)..."
         cmake --build "${BUILD_DIR}/arm64-v8a" --target package
+        [ -n "$MANAGER_APK_STAGED" ] && rm -f "$MANAGER_APK_STAGED"
         ;;
     clean)
         rm -rf "${BUILD_DIR}"; print_success "Cleaned."
         ;;
     *)
-        echo "Usage: $0 {init|webui|arm64|package|clean} [--no-webui] [--verbose]"
+        echo "Usage: $0 {init|webui|manager|arm64|package|clean} [--no-webui] [--no-manager] [--verbose]"
         exit 1
         ;;
 esac
