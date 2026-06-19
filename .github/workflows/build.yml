@@ -45,17 +45,6 @@ jobs:
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           "$SDKMANAGER" "ndk;29.0.14206865" "cmake;3.22.1"
 
-      - name: Set version from git
-        run: |
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          SHORT_HASH=$(git rev-parse --short=8 HEAD)
-          VERSION_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          sed -i "s/^version=.*/version=${VERSION_TAG}/" module/module.prop
-          sed -i "s/^versionCode=.*/versionCode=${COMMIT_COUNT}/" module/module.prop
-          echo "VERSION_TAG=$VERSION_TAG" >> "$GITHUB_ENV"
-          echo "SHORT_HASH=$SHORT_HASH" >> "$GITHUB_ENV"
-          echo "Building ${VERSION_TAG} (versionCode=${COMMIT_COUNT})"
-
       - name: Decode signing keystore
         env:
           KAGAMI_KEYSTORE_BASE64: ${{ secrets.KAGAMI_KEYSTORE_BASE64 }}
@@ -80,7 +69,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: kagami-${{ env.VERSION_TAG }}-${{ env.SHORT_HASH }}
+          name: kagami-${{ env.VERSION_NAME }}
           path: build/arm64-v8a/out/*.zip
           if-no-files-found: error
 
@@ -95,7 +84,7 @@ jobs:
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TITLE: "Kagami Build"
-          VERSION: ${{ env.VERSION_TAG }}
+          VERSION: ${{ env.VERSION_NAME }}
           BRANCH: ${{ github.ref_name }}
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then

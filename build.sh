@@ -166,21 +166,40 @@ build_arch() {
     fi
 }
 
-# Stamp module.prop from git
-stamp_version() {
-    [ -d "${PROJECT_ROOT}/.git" ] || return 0
-    local COMMIT_COUNT VERSION_TAG PROP
-    COMMIT_COUNT=$(git -C "${PROJECT_ROOT}" rev-list --count HEAD 2>/dev/null || echo "1")
-    VERSION_TAG=$(git -C "${PROJECT_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
-    PROP="${PROJECT_ROOT}/module/module.prop"
-    if [ "$OS_TYPE" = "macos" ]; then
-        sed -i '' "s/^version=.*/version=${VERSION_TAG}/" "$PROP"
-        sed -i '' "s/^versionCode=.*/versionCode=${COMMIT_COUNT}/" "$PROP"
-    else
-        sed -i "s/^version=.*/version=${VERSION_TAG}/" "$PROP"
-        sed -i "s/^versionCode=.*/versionCode=${COMMIT_COUNT}/" "$PROP"
+# Compute the unified version: v<tag>-<commitcount+10000>.
+#   tag  = latest git tag (leading v stripped), or 0.1.0 when there is none
+#   code = commit count + 10000  (e.g. the 18th commit -> 10018)
+# Exports VERSION_NAME / VERSION_CODE for the module, KAGAMI_VERSION_* for the
+# manager app's gradle build, and surfaces them to $GITHUB_ENV so CI's artifact
+# and Telegram steps use the very same string.
+compute_version() {
+    local tag count
+    tag=$(git -C "${PROJECT_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "0.1.0")
+    tag="${tag#v}"
+    [ -n "$tag" ] || tag="0.1.0"
+    count=$(git -C "${PROJECT_ROOT}" rev-list --count HEAD 2>/dev/null || echo "0")
+    VERSION_CODE=$((count + 10000))
+    VERSION_NAME="v${tag}-${VERSION_CODE}"
+    export VERSION_NAME VERSION_CODE
+    export KAGAMI_VERSION_NAME="$VERSION_NAME" KAGAMI_VERSION_CODE="$VERSION_CODE"
+    if [ -n "${GITHUB_ENV:-}" ]; then
+        echo "VERSION_NAME=${VERSION_NAME}" >> "$GITHUB_ENV"
+        echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
     fi
-    print_info "Module version: ${VERSION_TAG} (versionCode=${COMMIT_COUNT})"
+}
+
+# Stamp the computed version into module/module.prop (run compute_version first).
+stamp_module_prop() {
+    local PROP="${PROJECT_ROOT}/module/module.prop"
+    [ -f "$PROP" ] || return 0
+    if [ "$OS_TYPE" = "macos" ]; then
+        sed -i '' "s/^version=.*/version=${VERSION_NAME}/" "$PROP"
+        sed -i '' "s/^versionCode=.*/versionCode=${VERSION_CODE}/" "$PROP"
+    else
+        sed -i "s/^version=.*/version=${VERSION_NAME}/" "$PROP"
+        sed -i "s/^versionCode=.*/versionCode=${VERSION_CODE}/" "$PROP"
+    fi
+    print_info "Module version: ${VERSION_NAME} (versionCode=${VERSION_CODE})"
 }
 
 # Main
@@ -205,8 +224,9 @@ echo "║   OS: $(printf '%-31s' "$OS_TYPE")  ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
 
-check_deps
-find_ndk
+case $COMMAND in
+    arm64|package) check_deps; find_ndk ;;
+esac
 
 case $COMMAND in
     init)
@@ -221,11 +241,16 @@ case $COMMAND in
     manager)
         build_manager
         ;;
+    version)
+        compute_version
+        print_info "Version: ${VERSION_NAME} (versionCode=${VERSION_CODE})"
+        ;;
     package)
+        compute_version
+        stamp_module_prop
         build_webui
         build_arch "arm64-v8a"
         build_manager
-        stamp_version
         print_info "Packaging (cmake)..."
         cmake --build "${BUILD_DIR}/arm64-v8a" --target package
         [ -n "$MANAGER_APK_STAGED" ] && rm -f "$MANAGER_APK_STAGED"
@@ -234,7 +259,7 @@ case $COMMAND in
         rm -rf "${BUILD_DIR}"; print_success "Cleaned."
         ;;
     *)
-        echo "Usage: $0 {init|webui|manager|arm64|package|clean} [--no-webui] [--no-manager] [--verbose]"
+        echo "Usage: $0 {init|webui|manager|arm64|version|package|clean} [--no-webui] [--no-manager] [--verbose]"
         exit 1
         ;;
 esac

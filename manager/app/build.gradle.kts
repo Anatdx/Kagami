@@ -15,6 +15,31 @@ val kagamiHasSigning = listOf(
     kagamiKeystore, kagamiKeystorePassword, kagamiKeyAlias, kagamiKeyPassword,
 ).all { !it.isNullOrBlank() }
 
+// Version unified with the module: v<tag>-<commitcount+10000>. build.sh exports
+// KAGAMI_VERSION_* in the orchestrated build; fall back to git here for a
+// standalone "cd manager && ./gradlew" build.
+fun computeVersion(): Pair<String, Int> {
+    val envName = System.getenv("KAGAMI_VERSION_NAME")
+    val envCode = System.getenv("KAGAMI_VERSION_CODE")?.toIntOrNull()
+    if (!envName.isNullOrBlank() && envCode != null) return envName to envCode
+    val repoRoot = rootProject.projectDir.parentFile
+    fun git(vararg args: String): String = try {
+        val proc = ProcessBuilder(listOf("git", *args))
+            .directory(repoRoot)
+            .redirectErrorStream(true)
+            .start()
+        proc.inputStream.bufferedReader().use { it.readText() }.trim().also { proc.waitFor() }
+    } catch (e: Exception) {
+        ""
+    }
+    val tag = git("describe", "--tags", "--abbrev=0").ifBlank { "0.1.0" }.removePrefix("v")
+    val count = git("rev-list", "--count", "HEAD").toIntOrNull() ?: 0
+    val code = count + 10000
+    return "v$tag-$code" to code
+}
+
+val (kagamiVersionName, kagamiVersionCode) = computeVersion()
+
 android {
     namespace = "com.anatdx.kagami"
     compileSdk = 36
@@ -24,8 +49,8 @@ android {
         applicationId = "com.anatdx.kagami"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = kagamiVersionCode
+        versionName = kagamiVersionName
 
         externalNativeBuild {
             cmake {
