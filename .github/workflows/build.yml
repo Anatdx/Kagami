@@ -83,3 +83,33 @@ jobs:
           name: kagami-${{ env.VERSION_TAG }}-${{ env.SHORT_HASH }}
           path: build/arm64-v8a/out/*.zip
           if-no-files-found: error
+
+      - name: Upload to Telegram
+        if: github.ref == 'refs/heads/main'
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SESSION_STRING: ${{ secrets.TELEGRAM_SESSION_STRING }}
+          MESSAGE_THREAD_ID: ${{ secrets.MESSAGE_THREAD_ID }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "Kagami Build"
+          VERSION: ${{ env.VERSION_TAG }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "BOT_TOKEN/CHAT_ID not set, skipping Telegram upload."
+            exit 0
+          fi
+          python3 -m pip install --break-system-packages --quiet telethon
+          ZIP=$(ls build/arm64-v8a/out/*.zip 2>/dev/null | head -1)
+          if [ -z "$ZIP" ]; then echo "No zip to upload"; exit 1; fi
+          FILES="$ZIP"
+          APK=$(ls manager/app/build/outputs/apk/release/*.apk 2>/dev/null | grep -v unsigned | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" "$RUNNER_TEMP/KagamiManager.apk"
+            FILES="$FILES $RUNNER_TEMP/KagamiManager.apk"
+          fi
+          echo "Uploading to Telegram: $FILES"
+          python3 scripts/kagamibot.py $FILES

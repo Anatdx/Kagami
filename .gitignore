@@ -98,3 +98,7 @@ captures/
 *.aab
 *.keystore
 *.jks
+
+# Python (CI helper scripts)
+__pycache__/
+*.pyc
