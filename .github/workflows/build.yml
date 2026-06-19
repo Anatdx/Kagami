@@ -21,6 +21,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -31,6 +38,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build zip
+
+      - name: Install manager NDK & CMake
+        run: |
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;29.0.14206865" "cmake;3.22.1"
 
       - name: Set version from git
         run: |
@@ -43,11 +56,25 @@ jobs:
           echo "SHORT_HASH=$SHORT_HASH" >> "$GITHUB_ENV"
           echo "Building ${VERSION_TAG} (versionCode=${COMMIT_COUNT})"
 
+      - name: Decode signing keystore
+        env:
+          KAGAMI_KEYSTORE_BASE64: ${{ secrets.KAGAMI_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KAGAMI_KEYSTORE_BASE64" ]; then
+            echo "No KAGAMI_KEYSTORE_BASE64 secret — manager APK will be built unsigned."
+            exit 0
+          fi
+          echo "$KAGAMI_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/kagami.jks"
+          echo "KAGAMI_KEYSTORE=$RUNNER_TEMP/kagami.jks" >> "$GITHUB_ENV"
+
       - name: Build & package
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          KAGAMI_KEYSTORE_PASSWORD: ${{ secrets.KAGAMI_KEYSTORE_PASSWORD }}
+          KAGAMI_KEY_ALIAS: ${{ secrets.KAGAMI_KEY_ALIAS }}
+          KAGAMI_KEY_PASSWORD: ${{ secrets.KAGAMI_KEY_PASSWORD }}
         run: |
-          chmod +x build.sh scripts/*.sh
+          chmod +x build.sh scripts/*.sh manager/gradlew
           ./build.sh package
 
       - name: Upload artifact
